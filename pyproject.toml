@@ -59,6 +59,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/acamolese/gtm-audit-mcp"
+Repository = "https://github.com/acamolese/gtm-audit-mcp"
 Issues = "https://github.com/acamolese/gtm-audit-mcp/issues"
 
 [project.scripts]
