@@ -58,8 +58,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/genoma/mcp-gtm-audit"
-Issues = "https://github.com/genoma/mcp-gtm-audit/issues"
+Homepage = "https://github.com/acamolese/gtm-audit-mcp"
+Repository = "https://github.com/acamolese/gtm-audit-mcp"
+Issues = "https://github.com/acamolese/gtm-audit-mcp/issues"
 
 [project.scripts]
 mcp-gtm-audit = "mcp_gtm_audit.__main__:main"
