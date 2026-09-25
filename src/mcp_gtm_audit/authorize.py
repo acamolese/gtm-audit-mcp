@@ -60,8 +60,12 @@ def run_oauth_flow() -> None:
         def log_message(self, format, *args):  # noqa: A002
             pass
 
-    print("Opening browser for authorization...")
-    webbrowser.open(auth_url)
+    print(f"Open this URL in your browser to authorize:\n\n{auth_url}\n")
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        pass
+    print("Waiting for the callback on http://localhost:8080 ...")
 
     server = http.server.HTTPServer(("localhost", PORT), Handler)
     server.handle_request()
