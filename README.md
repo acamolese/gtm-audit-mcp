@@ -15,15 +15,22 @@ MCP (Model Context Protocol) server for **Google Tag Manager** auditing. Lets Cl
 
 ## Installation
 
+Until the package lands on PyPI, install straight from GitHub:
+
 ```bash
-pipx install mcp-gtm-audit
+pipx install "git+https://github.com/acamolese/gtm-audit-mcp.git"
 ```
 
 Or with `uv`:
 
 ```bash
-uv tool install mcp-gtm-audit
+uv tool install "git+https://github.com/acamolese/gtm-audit-mcp.git"
 ```
+
+> **Setting this up with an AI coding agent?** Point it at
+> [SETUP-FOR-AI-AGENTS.md](SETUP-FOR-AI-AGENTS.md): a step-by-step guide written
+> for Claude Code, Claude Desktop, Cursor and similar tools, including the
+> Google Cloud OAuth steps that need a human in the browser.
 
 ## Authorization
 
@@ -46,7 +53,9 @@ export GTM_REFRESH_TOKEN="..."
    mcp-gtm-audit auth
    ```
 
-   This opens your browser, exchanges the code, and saves the refresh token to `~/.config/mcp-gtm-audit/token.json`.
+   This prints the authorization URL, opens your browser, listens on `http://localhost:8080` for the callback, and saves the refresh token to `~/.config/mcp-gtm-audit/token.json`.
+
+   Note: if the OAuth consent screen is in *Testing* mode, Google expires the refresh token after 7 days; re-run `mcp-gtm-audit auth` or publish the consent screen.
 
 The required OAuth scope is `https://www.googleapis.com/auth/tagmanager.readonly`.
 

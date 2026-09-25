@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 from . import config
+
+
+def _parse_expiry(value) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_credentials() -> Credentials:
@@ -19,6 +32,7 @@ def load_credentials() -> Credentials:
         client_id=oauth["client_id"],
         client_secret=oauth["client_secret"],
         scopes=token.get("scopes") or config.SCOPES,
+        expiry=_parse_expiry(token.get("expiry")),
     )
     if not creds.valid:
         creds.refresh(Request())
