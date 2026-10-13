@@ -1,39 +1,48 @@
-"""Generazione report HTML dell'audit GTM."""
+"""Self-contained HTML report of an audit run."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from typing import Any
 
+from . import i18n
+
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-SEVERITY_COLORS = {
-    "high": "#c0392b",
-    "medium": "#e67e22",
-    "low": "#7f8c8d",
-}
+SEVERITY_COLORS = {"high": "#c0392b", "medium": "#e67e22", "low": "#7f8c8d"}
 
 
 def render_audit_html(
     audit: dict[str, Any],
     container_label: str,
     tracking: dict[str, Any] | None = None,
+    language: str = "en",
 ) -> str:
+    lang = i18n.normalize_language(language)
+
+    def tr(key: str, **params) -> str:
+        return escape(i18n.t(lang, key, **params))
+
     issues = sorted(audit["issues"], key=lambda i: (SEVERITY_ORDER.get(i["severity"], 9), i["code"]))
     stats = audit["stats"]
     snap = audit["snapshot"]
-    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    generated = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
-    rows = "\n".join(_issue_row(i) for i in issues) or _empty_row()
-    type_rows = "\n".join(
-        f"<tr><td>{escape(t)}</td><td>{n}</td></tr>"
-        for t, n in sorted(stats.get("tags_by_type", {}).items(), key=lambda x: -x[1])
-    ) or "<tr><td colspan='2'>Nessun tag</td></tr>"
+    rows = "\n".join(_issue_row(i) for i in issues) or f"<tr><td colspan='4'>{tr('report.no_issues')}</td></tr>"
+    type_rows = (
+        "\n".join(
+            f"<tr><td>{escape(t)}</td><td>{n}</td></tr>"
+            for t, n in sorted(stats.get("tags_by_type", {}).items(), key=lambda x: -x[1])
+        )
+        or f"<tr><td colspan='2'>{tr('report.no_tags')}</td></tr>"
+    )
 
-    tracking_html = _render_tracking(tracking) if tracking else ""
+    tracking_html = _render_tracking(tracking, lang) if tracking else ""
+    workspace = f"· workspace {escape(str(snap.get('workspaceId')))}" if snap.get("workspaceId") else ""
+    version = f"· version {escape(str(snap.get('versionId')))}" if snap.get("versionId") else ""
 
     return f"""<!doctype html>
-<html lang="it">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <title>GTM Audit · {escape(container_label)}</title>
@@ -59,36 +68,35 @@ def render_audit_html(
 </style>
 </head>
 <body>
-<h1>Audit Google Tag Manager</h1>
-<div class="meta">{escape(container_label)} · generato {generated}</div>
+<h1>{tr("report.title")}</h1>
+<div class="meta">{escape(container_label)} · {tr("report.generated")} {generated}</div>
 
 <div class="grid">
-  <div class="stat"><div class="num">{stats.get('tags', 0)}</div><div class="label">Tag</div></div>
-  <div class="stat"><div class="num">{stats.get('triggers', 0)}</div><div class="label">Trigger</div></div>
-  <div class="stat"><div class="num">{stats.get('variables', 0)}</div><div class="label">Variabili</div></div>
-  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS['high']}">{stats.get('issues_high', 0)}</div><div class="label">Criticità alta</div></div>
-  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS['medium']}">{stats.get('issues_medium', 0)}</div><div class="label">Media</div></div>
-  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS['low']}">{stats.get('issues_low', 0)}</div><div class="label">Bassa</div></div>
+  <div class="stat"><div class="num">{stats.get("tags", 0)}</div><div class="label">{tr("report.tags")}</div></div>
+  <div class="stat"><div class="num">{stats.get("triggers", 0)}</div><div class="label">{tr("report.triggers")}</div></div>
+  <div class="stat"><div class="num">{stats.get("variables", 0)}</div><div class="label">{tr("report.variables")}</div></div>
+  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS["high"]}">{stats.get("issues_high", 0)}</div><div class="label">{tr("report.high")}</div></div>
+  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS["medium"]}">{stats.get("issues_medium", 0)}</div><div class="label">{tr("report.medium")}</div></div>
+  <div class="stat"><div class="num" style="color:{SEVERITY_COLORS["low"]}">{stats.get("issues_low", 0)}</div><div class="label">{tr("report.low")}</div></div>
 </div>
 
-<h2>Distribuzione tag per tipo</h2>
+<h2>{tr("report.by_type")}</h2>
 <table>
-  <thead><tr><th>Tipo</th><th>Conteggio</th></tr></thead>
+  <thead><tr><th>{tr("report.type")}</th><th>{tr("report.count")}</th></tr></thead>
   <tbody>{type_rows}</tbody>
 </table>
 
-<h2>Criticità rilevate ({len(issues)})</h2>
+<h2>{tr("report.issues", n=len(issues))}</h2>
 <table>
-  <thead><tr><th>Severità</th><th>Codice</th><th>Entità</th><th>Dettaglio</th></tr></thead>
+  <thead><tr><th>{tr("report.severity")}</th><th>{tr("report.code")}</th><th>{tr("report.entity")}</th><th>{tr("report.detail")}</th></tr></thead>
   <tbody>{rows}</tbody>
 </table>
 
 {tracking_html}
 
-<p class="small" style="margin-top:32px;">Snapshot: {escape(snap.get('source') or '')}
-  · account {escape(snap.get('accountId') or '')} · container {escape(snap.get('containerId') or '')}
-  {f"· workspace {escape(snap.get('workspaceId') or '')}" if snap.get('workspaceId') else ''}
-  {f"· version {escape(str(snap.get('versionId') or ''))}" if snap.get('versionId') else ''}
+<p class="small" style="margin-top:32px;">{tr("report.snapshot")}: {escape(str(snap.get("source") or ""))}
+  · account {escape(str(snap.get("accountId") or ""))} · container {escape(str(snap.get("containerId") or ""))}
+  {workspace} {version}
 </p>
 </body>
 </html>"""
@@ -96,7 +104,7 @@ def render_audit_html(
 
 def _issue_row(i: dict) -> str:
     color = SEVERITY_COLORS.get(i["severity"], "#666")
-    entity = escape(f"{i.get('entity_type','')}: {i.get('entity_name','')}".strip(": "))
+    entity = escape(f"{i.get('entity_type', '')}: {i.get('entity_name', '')}".strip(": "))
     return (
         f"<tr>"
         f"<td><span class='badge' style='background:{color}'>{i['severity']}</span></td>"
@@ -107,48 +115,56 @@ def _issue_row(i: dict) -> str:
     )
 
 
-def _empty_row() -> str:
-    return "<tr><td colspan='4'>Nessuna criticità rilevata 🎉</td></tr>"
+def _render_tracking(tracking: dict[str, Any], lang: str) -> str:
+    def tr(key: str, **params) -> str:
+        return escape(i18n.t(lang, key, **params))
 
-
-def _render_tracking(tracking: dict[str, Any]) -> str:
     findings = tracking.get("findings") or []
-    rows = "\n".join(
-        f"<tr><td><span class='badge' style='background:{SEVERITY_COLORS.get(f['severity'], '#666')}'>"
-        f"{f['severity']}</span></td><td>{escape(f['tag'])}</td><td>{escape(f['issue'])}</td></tr>"
-        for f in findings
-    ) or "<tr><td colspan='3'>Nessun finding di tracciamento</td></tr>"
+    rows = (
+        "\n".join(
+            f"<tr><td><span class='badge' style='background:{SEVERITY_COLORS.get(f['severity'], '#666')}'>"
+            f"{f['severity']}</span></td><td>{escape(f['tag'])}</td><td>{escape(f['issue'])}</td></tr>"
+            for f in findings
+        )
+        or f"<tr><td colspan='3'>{tr('report.no_findings')}</td></tr>"
+    )
 
-    ga4_rows = "\n".join(
-        f"<tr><td>{escape(c.get('name',''))}</td>"
-        f"<td><code>{escape(c.get('measurementId') or '—')}</code></td>"
-        f"<td>{escape(c.get('server_container_url') or '—')}</td></tr>"
-        for c in tracking.get("ga4_configs", [])
-    ) or "<tr><td colspan='3'>Nessuna GA4 Configuration</td></tr>"
+    ga4_rows = (
+        "\n".join(
+            f"<tr><td>{escape(c.get('name', ''))}</td>"
+            f"<td><code>{escape(c.get('measurementId') or '—')}</code></td>"
+            f"<td>{escape(c.get('server_container_url') or '—')}</td></tr>"
+            for c in tracking.get("ga4_configs", [])
+        )
+        or f"<tr><td colspan='3'>{tr('report.no_ga4')}</td></tr>"
+    )
 
-    ads_rows = "\n".join(
-        f"<tr><td>{escape(c.get('name',''))}</td>"
-        f"<td><code>{escape(c.get('conversionId') or '—')}</code></td>"
-        f"<td><code>{escape(c.get('conversionLabel') or '—')}</code></td></tr>"
-        for c in tracking.get("ads_conversions", [])
-    ) or "<tr><td colspan='3'>Nessuna conversione Google Ads</td></tr>"
+    ads_rows = (
+        "\n".join(
+            f"<tr><td>{escape(c.get('name', ''))}</td>"
+            f"<td><code>{escape(c.get('conversionId') or '—')}</code></td>"
+            f"<td><code>{escape(c.get('conversionLabel') or '—')}</code></td></tr>"
+            for c in tracking.get("ads_conversions", [])
+        )
+        or f"<tr><td colspan='3'>{tr('report.no_ads')}</td></tr>"
+    )
 
     return f"""
-<h2>Validazione tracciamento</h2>
+<h2>{tr("report.tracking")}</h2>
 <table>
-  <thead><tr><th>Severità</th><th>Tag</th><th>Issue</th></tr></thead>
+  <thead><tr><th>{tr("report.severity")}</th><th>{tr("report.tag")}</th><th>{tr("report.issue")}</th></tr></thead>
   <tbody>{rows}</tbody>
 </table>
 
-<h2>GA4 Configurations</h2>
+<h2>{tr("report.ga4_configs")}</h2>
 <table>
-  <thead><tr><th>Tag</th><th>Measurement ID</th><th>Server container</th></tr></thead>
+  <thead><tr><th>{tr("report.tag")}</th><th>{tr("report.measurement_id")}</th><th>{tr("report.server_container")}</th></tr></thead>
   <tbody>{ga4_rows}</tbody>
 </table>
 
-<h2>Google Ads Conversions</h2>
+<h2>{tr("report.ads")}</h2>
 <table>
-  <thead><tr><th>Tag</th><th>Conversion ID</th><th>Conversion Label</th></tr></thead>
+  <thead><tr><th>{tr("report.tag")}</th><th>{tr("report.conversion_id")}</th><th>{tr("report.conversion_label")}</th></tr></thead>
   <tbody>{ads_rows}</tbody>
 </table>
 """

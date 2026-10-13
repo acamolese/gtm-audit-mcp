@@ -1,17 +1,21 @@
-"""Configuration and credential resolution for the GTM audit MCP server.
+"""Configuration, credential resolution and the read/write mode switch.
 
 Credentials are resolved in this order (highest priority first):
 
-1. Environment variables
-   - GTM_CLIENT_ID, GTM_CLIENT_SECRET, GTM_REFRESH_TOKEN (required together)
-2. XDG config directory
-   - $XDG_CONFIG_HOME/mcp-gtm-audit/oauth_credentials.json
-   - $XDG_CONFIG_HOME/mcp-gtm-audit/token.json
-   - Defaults to ~/.config/mcp-gtm-audit/ on Linux/macOS
+1. Environment variables: GTM_CLIENT_ID, GTM_CLIENT_SECRET, GTM_REFRESH_TOKEN
+2. $XDG_CONFIG_HOME/mcp-gtm-audit/oauth_credentials.json and token.json
+   (defaults to ~/.config/mcp-gtm-audit/)
+
+The server is read-only unless GTM_ALLOW_WRITE is set to 1/true/yes. In write
+mode it asks for `tagmanager.edit.containers` on top of `tagmanager.readonly`,
+which allows changes inside workspaces. It never asks for the version or
+publish scopes: creating a version and publishing stay in the GTM UI, after a
+human has looked at the workspace in Preview.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import datetime
@@ -19,9 +23,29 @@ from pathlib import Path
 
 APP_NAME = "mcp-gtm-audit"
 
-SCOPES = [
-    "https://www.googleapis.com/auth/tagmanager.readonly",
-]
+READ_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly"
+EDIT_SCOPE = "https://www.googleapis.com/auth/tagmanager.edit.containers"
+
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def write_enabled() -> bool:
+    """True when GTM_ALLOW_WRITE opts the server into workspace writes."""
+    return os.environ.get("GTM_ALLOW_WRITE", "").strip().lower() in _TRUE
+
+
+def required_scopes() -> list[str]:
+    """Scopes the current mode needs: read-only, or read plus container edit."""
+    scopes = [READ_SCOPE]
+    if write_enabled():
+        scopes.append(EDIT_SCOPE)
+    return scopes
+
+
+def reports_dir() -> Path:
+    """Where gtm_audit and gtm_export write by default (GTM_REPORTS_DIR or ~/Reports)."""
+    env = os.environ.get("GTM_REPORTS_DIR")
+    return Path(env).expanduser() if env else Path.home() / "Reports"
 
 
 def xdg_config_home() -> Path:
@@ -44,6 +68,7 @@ def _credential_paths(filename: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 # OAuth client (client_id + client_secret)
 # ---------------------------------------------------------------------------
+
 
 def _oauth_from_env() -> dict | None:
     cid = os.environ.get("GTM_CLIENT_ID")
@@ -81,14 +106,15 @@ def load_oauth_client() -> dict:
         if data:
             return data
     raise FileNotFoundError(
-        "No OAuth client credentials found. Set GTM_CLIENT_ID and GTM_CLIENT_SECRET "
-        f"environment variables, or place oauth_credentials.json in {config_dir()}/."
+        "No OAuth client credentials found. Set GTM_CLIENT_ID and GTM_CLIENT_SECRET, "
+        f"or place oauth_credentials.json in {config_dir()}/."
     )
 
 
 # ---------------------------------------------------------------------------
-# Token (access_token + refresh_token + expiry)
+# Token (access_token + refresh_token + expiry + scopes)
 # ---------------------------------------------------------------------------
+
 
 def _token_from_env() -> dict | None:
     refresh = os.environ.get("GTM_REFRESH_TOKEN")
@@ -129,9 +155,17 @@ def load_token() -> dict:
         if data:
             return data
     raise FileNotFoundError(
-        "No OAuth token found. Set GTM_REFRESH_TOKEN environment variable, or run "
-        "`mcp-gtm-audit auth` to authorize the app and generate one."
+        "No OAuth token found. Set GTM_REFRESH_TOKEN, or run `mcp-gtm-audit auth` "
+        "to authorize the app and create one."
     )
+
+
+def granted_scopes(token: dict) -> list[str]:
+    """Scopes recorded with the token; empty when unknown (env tokens)."""
+    scopes = token.get("scopes") or token.get("scope") or []
+    if isinstance(scopes, str):
+        scopes = scopes.split()
+    return list(scopes)
 
 
 def save_token(token: dict) -> None:
@@ -141,6 +175,8 @@ def save_token(token: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     to_write = {k: v for k, v in token.items() if not k.startswith("__")}
     path.write_text(json.dumps(to_write, indent=2), encoding="utf-8")
+    with contextlib.suppress(OSError):  # platform dependent
+        path.chmod(0o600)
 
 
 def update_saved_token(access_token: str, expiry: datetime | None) -> None:

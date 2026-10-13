@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-gtm-audit"
-version = "0.1.0"
-description = "MCP server for Google Tag Manager: inventory containers/tags/triggers/variables, audit common implementation issues, diff workspaces against versions, and validate GA4/Google Ads/Meta tracking from Claude, Cursor, Zed, and any Model Context Protocol client."
+version = "0.2.0"
+description = "MCP server for Google Tag Manager: audit containers, validate GA4/Google Ads/Meta tracking, diff workspaces against versions, export importable container JSON and, in opt-in write mode, apply reviewed changes inside a workspace. Never publishes. For Claude, Cursor, Codex and any MCP client."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -46,6 +46,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP :: Site Management",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Information Analysis",
@@ -55,6 +56,13 @@ dependencies = [
     "mcp>=1.0.0",
     "google-auth>=2.0.0",
     "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "build>=1.2",
 ]
 
 [project.urls]
@@ -75,3 +83,20 @@ include = [
     "LICENSE",
     "pyproject.toml",
 ]
+
+[tool.ruff]
+line-length = 118
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE", "DTZ", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "DTZ001", "E501"]
+"src/mcp_gtm_audit/i18n.py" = ["E501"]
+"src/mcp_gtm_audit/report.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,4 +1,9 @@
-"""Regole di audit su uno snapshot GTM (workspace o version)."""
+"""Audit rules over a container snapshot (workspace or version).
+
+Rules are pure functions over the snapshot: no I/O, no HTTP. Each issue carries
+a code and parameters; the wording is resolved by `i18n` when the result is
+serialised, so the same run can be reported in any supported language.
+"""
 
 from __future__ import annotations
 
@@ -7,35 +12,48 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import i18n
+
 SEVERITY_HIGH = "high"
 SEVERITY_MEDIUM = "medium"
 SEVERITY_LOW = "low"
 
-# Trigger built-in di GTM senza ID nelle proprietà standard.
-ALWAYS_TRIGGER_ID = "2147479553"  # All Pages
+# Built-in "All Pages" trigger: it never appears in the trigger list.
+ALWAYS_TRIGGER_ID = "2147479553"
+BUILTIN_TRIGGER_IDS = {ALWAYS_TRIGGER_ID, "2147479572", "2147479573"}  # All Pages, Consent Init, Initialization
 
 GA4_CONFIG_TYPES = {"gaawc", "googtag"}
 GA4_EVENT_TYPES = {"gaawe"}
-ADS_TYPES = {"awct", "sp", "awcr"}  # conversion tracking, remarketing, conversion linker
-META_TYPES_HINTS = ("Facebook", "Meta", "Pixel")
 
 
 @dataclass
 class Issue:
     severity: str
     code: str
-    title: str
-    detail: str
     entity_type: str = ""
     entity_name: str = ""
     entity_id: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self, language: str = "en") -> dict[str, Any]:
+        base = self.code
+        if self.code.endswith("_duplicate_name"):
+            base = "duplicate_name"
+        elif self.code.endswith("_default_name"):
+            base = "default_name"
+        params = dict(self.params)
+        if "kind" in params:
+            params["kind"] = i18n.t(language, f"kind.{params['kind']}")
+            params["kind_lower"] = params["kind"].lower()
+        if base == "tag_custom_html":
+            params["document_write"] = (
+                i18n.t(language, "tag_custom_html.document_write") if params.get("document_write") else ""
+            )
         return {
             "severity": self.severity,
             "code": self.code,
-            "title": self.title,
-            "detail": self.detail,
+            "title": i18n.t(language, f"{base}.title", **params),
+            "detail": i18n.t(language, f"{base}.detail", **params),
             "entity_type": self.entity_type,
             "entity_name": self.entity_name,
             "entity_id": self.entity_id,
@@ -51,7 +69,7 @@ class AuditResult:
     def add(self, issue: Issue) -> None:
         self.issues.append(issue)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, language: str = "en") -> dict[str, Any]:
         return {
             "snapshot": {
                 "source": self.snapshot.get("source"),
@@ -61,7 +79,7 @@ class AuditResult:
                 "versionId": self.snapshot.get("versionId"),
             },
             "stats": self.stats,
-            "issues": [i.to_dict() for i in self.issues],
+            "issues": [i.to_dict(language) for i in self.issues],
         }
 
 
@@ -95,65 +113,45 @@ def run_audit(snapshot: dict[str, Any]) -> AuditResult:
     triggers = snapshot.get("triggers", []) or []
     variables = snapshot.get("variables", []) or []
 
-    trigger_by_id = {t["triggerId"]: t for t in triggers}
-    variable_names = {v["name"] for v in variables}
+    variable_names = {v.get("name", "") for v in variables}
+    builtin_names = _builtin_names(snapshot)
     used_trigger_ids: set[str] = set()
     used_variable_names: set[str] = set()
 
-    # ----- Pre-scan riferimenti a variabili -----
-    for tag in tags:
-        for s in _all_strings(tag):
-            used_variable_names.update(_variable_references(s))
-    for trig in triggers:
-        for s in _all_strings(trig):
-            used_variable_names.update(_variable_references(s))
-    for var in variables:
-        for s in _all_strings(var):
+    for entity in (*tags, *triggers, *variables):
+        for s in _all_strings(entity):
             used_variable_names.update(_variable_references(s))
 
-    # ----- Audit per tag -----
     type_counts: Counter[str] = Counter()
     duplicate_signature: dict[str, list[dict]] = defaultdict(list)
 
     for tag in tags:
+        name, tag_id = tag.get("name", ""), tag.get("tagId", "")
         type_counts[tag.get("type", "unknown")] += 1
         firing = tag.get("firingTriggerId") or []
         blocking = tag.get("blockingTriggerId") or []
         used_trigger_ids.update(firing)
         used_trigger_ids.update(blocking)
 
-        # Tag senza trigger
         if not firing:
-            result.add(Issue(
-                SEVERITY_HIGH, "tag_no_trigger",
-                "Tag senza trigger di firing",
-                "Il tag non si attiverà mai. Aggiungi almeno un trigger o eliminalo.",
-                "tag", tag.get("name", ""), tag.get("tagId", ""),
-            ))
+            result.add(Issue(SEVERITY_HIGH, "tag_no_trigger", "tag", name, tag_id))
 
-        # Tag in pausa
         if tag.get("paused"):
-            result.add(Issue(
-                SEVERITY_LOW, "tag_paused",
-                "Tag in pausa",
-                "Il tag è in pausa: verifica se va riattivato o rimosso.",
-                "tag", tag.get("name", ""), tag.get("tagId", ""),
-            ))
+            result.add(Issue(SEVERITY_LOW, "tag_paused", "tag", name, tag_id))
 
-        # Custom HTML
         if tag.get("type") == "html":
             html = _param_value(tag.get("parameter"), "html") or ""
-            detail = "Custom HTML in produzione: rivedi sicurezza, performance e privacy."
-            if "document.write" in html:
-                detail += " Contiene document.write (sconsigliato)."
-            result.add(Issue(
-                SEVERITY_MEDIUM, "tag_custom_html",
-                "Custom HTML attivo",
-                detail,
-                "tag", tag.get("name", ""), tag.get("tagId", ""),
-            ))
+            result.add(
+                Issue(
+                    SEVERITY_MEDIUM,
+                    "tag_custom_html",
+                    "tag",
+                    name,
+                    tag_id,
+                    {"document_write": "document.write" in html},
+                )
+            )
 
-        # GA4 Configuration senza Measurement ID
         if tag.get("type") in GA4_CONFIG_TYPES:
             mid = (
                 _param_value(tag.get("parameter"), "measurementId")
@@ -161,100 +159,68 @@ def run_audit(snapshot: dict[str, Any]) -> AuditResult:
                 or _param_value(tag.get("parameter"), "tagId")
             )
             if not mid:
-                result.add(Issue(
-                    SEVERITY_HIGH, "ga4_missing_mid",
-                    "GA4 Configuration senza Measurement ID",
-                    "Configura il Measurement ID (formato G-XXXXX) per trasmettere dati a GA4.",
-                    "tag", tag.get("name", ""), tag.get("tagId", ""),
-                ))
+                result.add(Issue(SEVERITY_HIGH, "ga4_missing_mid", "tag", name, tag_id))
 
-        # GA4 Event senza riferimento a un Configuration tag o senza event name
         if tag.get("type") in GA4_EVENT_TYPES:
             event_name = _param_value(tag.get("parameter"), "eventName")
             measurement = _param_value(tag.get("parameter"), "measurementId")
             config_ref = _param_value(tag.get("parameter"), "measurementIdOverride")
             if not event_name:
-                result.add(Issue(
-                    SEVERITY_HIGH, "ga4_event_no_name",
-                    "GA4 Event senza event name",
-                    "Imposta un eventName: i tag GA4 senza nome non producono eventi validi.",
-                    "tag", tag.get("name", ""), tag.get("tagId", ""),
-                ))
+                result.add(Issue(SEVERITY_HIGH, "ga4_event_no_name", "tag", name, tag_id))
             if not measurement and not config_ref:
-                result.add(Issue(
-                    SEVERITY_MEDIUM, "ga4_event_no_config",
-                    "GA4 Event senza riferimento a Configuration",
-                    "Specifica una GA4 Configuration o un Measurement ID di override.",
-                    "tag", tag.get("name", ""), tag.get("tagId", ""),
-                ))
+                result.add(Issue(SEVERITY_MEDIUM, "ga4_event_no_config", "tag", name, tag_id))
 
-        # Consent settings
-        consent = tag.get("consentSettings", {})
+        consent = tag.get("consentSettings") or {}
         if not consent or consent.get("consentStatus") == "NOT_SET":
-            result.add(Issue(
-                SEVERITY_MEDIUM, "tag_no_consent",
-                "Tag senza Additional Consent Checks",
-                "Configura le Additional Consent Checks per rispettare il Consent Mode v2.",
-                "tag", tag.get("name", ""), tag.get("tagId", ""),
-            ))
+            result.add(Issue(SEVERITY_MEDIUM, "tag_no_consent", "tag", name, tag_id))
 
-        # Riferimenti a variabili eliminate
-        refs = set()
+        refs: set[str] = set()
         for s in _all_strings(tag):
             refs.update(_variable_references(s))
-        missing = refs - variable_names - _builtin_names(snapshot)
+        missing = refs - variable_names - builtin_names
         if missing:
-            result.add(Issue(
-                SEVERITY_HIGH, "tag_dead_variable",
-                "Tag referenzia variabili inesistenti",
-                "Variabili non trovate nel container: " + ", ".join(sorted(missing)),
-                "tag", tag.get("name", ""), tag.get("tagId", ""),
-            ))
+            result.add(
+                Issue(
+                    SEVERITY_HIGH,
+                    "tag_dead_variable",
+                    "tag",
+                    name,
+                    tag_id,
+                    {"names": ", ".join(sorted(missing))},
+                )
+            )
 
-        # Firma per duplicati: tipo + parametri normalizzati
-        sig = _tag_signature(tag)
-        duplicate_signature[sig].append(tag)
+        duplicate_signature[_tag_signature(tag)].append(tag)
 
-    # Tag duplicati (>1 con stessa firma)
-    for sig, group in duplicate_signature.items():
+    for group in duplicate_signature.values():
         if len(group) > 1:
             names = ", ".join(t.get("name", "?") for t in group)
-            result.add(Issue(
-                SEVERITY_MEDIUM, "tag_duplicate",
-                "Tag potenzialmente duplicati",
-                f"{len(group)} tag con configurazione equivalente: {names}",
-                "tag", names, ",".join(t.get("tagId", "") for t in group),
-            ))
+            result.add(
+                Issue(
+                    SEVERITY_MEDIUM,
+                    "tag_duplicate",
+                    "tag",
+                    names,
+                    ",".join(t.get("tagId", "") for t in group),
+                    {"count": len(group), "names": names},
+                )
+            )
 
-    # ----- Trigger orfani -----
     for trig in triggers:
         tid = trig.get("triggerId")
-        if tid not in used_trigger_ids and tid != ALWAYS_TRIGGER_ID:
-            result.add(Issue(
-                SEVERITY_LOW, "trigger_orphan",
-                "Trigger non utilizzato",
-                "Nessun tag fa riferimento a questo trigger. Verifica se va eliminato.",
-                "trigger", trig.get("name", ""), tid or "",
-            ))
+        if tid not in used_trigger_ids and tid not in BUILTIN_TRIGGER_IDS:
+            result.add(Issue(SEVERITY_LOW, "trigger_orphan", "trigger", trig.get("name", ""), tid or ""))
 
-    # ----- Variabili inutilizzate -----
     for var in variables:
-        if var["name"] not in used_variable_names:
-            result.add(Issue(
-                SEVERITY_LOW, "variable_unused",
-                "Variabile non utilizzata",
-                "Nessun tag, trigger o altra variabile la referenzia.",
-                "variable", var["name"], var.get("variableId", ""),
-            ))
+        if var.get("name") not in used_variable_names:
+            result.add(
+                Issue(SEVERITY_LOW, "variable_unused", "variable", var.get("name", ""), var.get("variableId", ""))
+            )
 
-    # ----- Naming convention -----
-    name_issues = _check_naming(tags, "tag")
-    name_issues += _check_naming(triggers, "trigger")
-    name_issues += _check_naming(variables, "variable")
-    for issue in name_issues:
-        result.add(issue)
+    for kind, items in (("tag", tags), ("trigger", triggers), ("variable", variables)):
+        for issue in _check_naming(items, kind):
+            result.add(issue)
 
-    # ----- Stats finali -----
     result.stats = {
         "tags": len(tags),
         "triggers": len(triggers),
@@ -284,23 +250,25 @@ def _tag_signature(tag: dict) -> str:
 
 def _check_naming(items: list[dict], kind: str) -> list[Issue]:
     issues: list[Issue] = []
-    seen_names: dict[str, int] = Counter(i.get("name", "") for i in items)
+    seen_names: Counter[str] = Counter(i.get("name", "") for i in items)
     for item in items:
         name = item.get("name", "")
         if not name:
             continue
+        entity_id = item.get(f"{kind}Id", "")
         if seen_names[name] > 1:
-            issues.append(Issue(
-                SEVERITY_MEDIUM, f"{kind}_duplicate_name",
-                f"{kind.capitalize()} con nome duplicato",
-                f"Esistono {seen_names[name]} {kind} con lo stesso nome '{name}'.",
-                kind, name, item.get(f"{kind}Id", ""),
-            ))
+            issues.append(
+                Issue(
+                    SEVERITY_MEDIUM,
+                    f"{kind}_duplicate_name",
+                    kind,
+                    name,
+                    entity_id,
+                    {"kind": kind, "count": seen_names[name], "name": name},
+                )
+            )
         if name.startswith("Untitled") or name.lower().startswith("copy of"):
-            issues.append(Issue(
-                SEVERITY_LOW, f"{kind}_default_name",
-                f"{kind.capitalize()} con nome di default",
-                f"Rinomina '{name}' usando una convenzione esplicita.",
-                kind, name, item.get(f"{kind}Id", ""),
-            ))
+            issues.append(
+                Issue(SEVERITY_LOW, f"{kind}_default_name", kind, name, entity_id, {"kind": kind, "name": name})
+            )
     return issues
