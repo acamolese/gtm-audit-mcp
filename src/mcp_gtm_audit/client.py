@@ -22,9 +22,10 @@ from google.oauth2.credentials import Credentials
 BASE_URL = "https://tagmanager.googleapis.com/tagmanager/v2"
 
 # Google's documented quota for the Tag Manager API is 0.25 queries per second
-# per user, i.e. 15 per minute. The window is kept slightly under that.
-RATE_LIMIT_CALLS = 15
-RATE_LIMIT_WINDOW = 62.0
+# per project, enforced on a 100-second sliding window (25 requests per 100 s),
+# plus 10,000 requests per day. The window here stays just under that.
+RATE_LIMIT_CALLS = 24
+RATE_LIMIT_WINDOW = 101.0
 MAX_ATTEMPTS = 5
 # Writes are metered separately and much more tightly than reads: a burst of
 # writes answers 429 "rateLimitExceeded" for minutes. Space them out and back
@@ -51,7 +52,7 @@ class GTMAPIError(RuntimeError):
         hint = ""
         if status == 429:
             hint = (
-                " (Tag Manager API quota: 15 requests per minute per user for reads; writes have their own, "
+                " (Tag Manager API quota: 25 requests per 100 seconds per project for reads; writes have their own, "
                 "smaller allowance and a burst of them is refused for minutes. Wait, then retry one change at a time)"
             )
         elif status == 403:

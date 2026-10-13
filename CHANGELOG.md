@@ -22,8 +22,8 @@ All notable changes to this project are documented here. The format follows
   scopes, write mode and API reachability in one call.
 - `language` argument (`en`, `it`) on `gtm_audit` and `gtm_tracking_validation`;
   the HTML report and every issue text follow it. English is the default.
-- Client-side rate limiting (15 requests per minute sliding window) and
-  retries on 429 and 5xx, matching the Tag Manager API quota. Writes are
+- Client-side rate limiting (25 requests per 100-second sliding window, the
+  documented project quota) and retries on 429 and 5xx. Writes are
   spaced 4 seconds apart with a longer back-off, since Google meters them
   separately.
 - Test suite, CI on three platforms, release workflow with PyPI trusted

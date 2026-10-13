@@ -147,9 +147,10 @@ public id. Reports and exports land in `~/Reports/<container>/` unless
   the client was not restarted.
 - **403 on a container**: the authorized account lacks access to that
   container in GTM, or write mode was used with a read-only token.
-- **429 / slow calls**: the Tag Manager API allows 15 requests per minute per
-  user. The client throttles and retries; a full workspace snapshot is 5 to 6
-  calls, an audit plus a diff fits in the window.
+- **429 / 403 quota, slow calls**: the Tag Manager API allows 0.25 requests
+  per second per project (25 per 100 seconds) and 10,000 per day. The client
+  throttles and retries; a full workspace snapshot is 5 to 6 calls, an audit
+  plus a diff fits in the window.
 - **429 on writes only, for minutes**: writes are metered separately and much
   more tightly than reads. The client spaces them 4 seconds apart and backs
   off up to 90 seconds; if the quota does not come back, stop and retry later,
