@@ -49,7 +49,7 @@ def make_client(responses):
 
 
 def test_sliding_window_sleeps_only_when_the_quota_is_used_up():
-    c, sleeps, _ = make_client([FakeResponse(200, {"account": []})] * 20)
+    c, sleeps, _ = make_client([FakeResponse(200, {"account": []})] * 40)
     for _ in range(client_module.RATE_LIMIT_CALLS):
         c.list_accounts()
     assert sleeps == []
